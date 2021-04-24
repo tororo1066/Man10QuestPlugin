@@ -49,7 +49,7 @@ class MySQLManager(private val plugin: JavaPlugin, private val conName: String) 
         PASS = plugin.config.getString("mysql.pass")
         PORT = plugin.config.getString("mysql.port")
         DB = plugin.config.getString("mysql.db")
-        plugin.getLogger().info("Config loaded  ${HOST} / ${USER}")
+        plugin.logger.info("Config loaded  $HOST / $USER")
 
     }
 
@@ -112,7 +112,7 @@ class MySQLManager(private val plugin: JavaPlugin, private val conName: String) 
     //     レコード数
     ////////////////////////////////
     fun count(table: String): Int {
-        var ret = 0
+        val ret: Int
         val set = this.query(String.format("SELECT count(*) from %s", table))
 
         try {
