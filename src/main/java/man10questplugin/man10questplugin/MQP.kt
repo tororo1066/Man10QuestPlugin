@@ -3,6 +3,7 @@ package man10questplugin.man10questplugin
 import net.kyori.adventure.text.Component
 import org.bukkit.Bukkit
 import org.bukkit.Material
+import org.bukkit.NamespacedKey
 import org.bukkit.command.Command
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
@@ -13,26 +14,29 @@ import org.bukkit.event.inventory.InventoryCloseEvent
 import org.bukkit.event.inventory.InventoryType
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
+import org.bukkit.persistence.PersistentDataType
 import org.bukkit.plugin.java.JavaPlugin
 import org.bukkit.util.io.BukkitObjectInputStream
 import org.bukkit.util.io.BukkitObjectOutputStream
 import org.yaml.snakeyaml.external.biz.base64Coder.Base64Coder
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.collections.HashMap
 
-class MQPData(val owner: Player, val item: ItemStack, val amount: Int, val price: Int, val month: Int, val day: Int, val boolean: Boolean)
+class MQPData(val owner: Player, val item: ItemStack, val amount: Int, val price: Int, val datetime : LocalDate, val boolean: Int)
 
 class MQP : JavaPlugin(),Listener {
-
     private lateinit var es : ExecutorService
     private val prefix = "§f[§d§lMan10§a§lQuest§f]§r"
     private val datamap = HashMap<Int,MQPData>()
     private lateinit var vault : VaultManager
+    private var tax = 0.00
     private var enable = true
 
 
@@ -42,26 +46,36 @@ class MQP : JavaPlugin(),Listener {
         getCommand("mq")?.setExecutor(this)
         vault = VaultManager(this)
         es = Executors.newCachedThreadPool()
+        enable = config.getBoolean("mode")
+        tax = config.getDouble("tax")
         val mysql = MySQLManager(this,"mqp")
-        mysql.execute("CREATE TABLE IF NOT EXISTS `mqp` (\n" +
+        mysql.execute("CREATE TABLE IF NOT EXISTS`mqp` (\n" +
                 "\t`id` INT NOT NULL AUTO_INCREMENT,\n" +
                 "\t`owner` VARCHAR(36) NOT NULL COLLATE 'utf8mb4_0900_ai_ci',\n" +
                 "\t`item` TEXT NULL COLLATE 'utf8mb4_0900_ai_ci',\n" +
                 "\t`amount` INT NULL,\n" +
                 "\t`price` INT NULL,\n" +
-                "\t`month` INT NULL,\n" +
-                "\t`day` INT NULL,\n" +
+                "\t`date` TEXT NULL COLLATE 'utf8mb4_0900_ai_ci',\n" +
                 "\t`boolean` TEXT NULL COLLATE 'utf8mb4_0900_ai_ci',\n" +
                 "\tPRIMARY KEY (`id`) USING BTREE\n" +
                 ")\n" +
                 "COLLATE='utf8mb4_0900_ai_ci'\n" +
                 "ENGINE=InnoDB\n" +
-                "AUTO_INCREMENT=2\n" +
                 ";")
-        mysql.execute("DELETE FROM mqp WHERE month <= ${ZonedDateTime.now().monthValue} AND day <= ${ZonedDateTime.now().dayOfMonth};")
+
         val rs = mysql.query("SELECT * FROM mqp;")
+        val year = LocalDate.now().year
+        val month = LocalDate.now().monthValue
+        val day = LocalDate.now().dayOfMonth
+        mysql.execute("UPDATE mqp SET boolean = 2 WHERE date >= '${year}-${month}-${day}';")
         while (rs?.next() == true){
-            Bukkit.getPlayer(UUID.fromString(rs.getString("owner")))?.let { itemFromBase64(rs.getString("item"))?.let { it1 -> MQPData(it, it1,rs.getInt("amount"),rs.getInt("price"),rs.getInt("month"),rs.getInt("day"),rs.getBoolean("boolean")) } }?.let { datamap.put(rs.getInt("id"),it) }
+            Bukkit.getPlayer(UUID.fromString(rs.getString("owner")))?.let { itemFromBase64(rs.getString("item"))?.let { it1 -> MQPData(it, it1,rs.getInt("amount"),
+                    rs.getInt("price"),
+                    LocalDate.of(rs.getString("date").split("-")[0].toInt(),
+                            rs.getString("date").split("-")[1].toInt(),
+                            rs.getString("date").split("-")[2].toInt()),
+                    rs.getInt("boolean")) } }?.let { datamap.put(rs.getInt("id"),it) }
+
         }
     }
 
@@ -79,20 +93,20 @@ class MQP : JavaPlugin(),Listener {
                 return true
             }
         }
+
         if (args.isEmpty()) {
             val inv = Bukkit.createInventory(null,54, Component.text("$prefix 依頼一覧 page 1"))
             var int = 0
             for (data in datamap){
                 if (inv.getItem(53) != null)break
-                if (data.value.boolean)continue
+                if (data.value.boolean > 0)continue
                 if (data.value.owner == sender)continue
                 val item = data.value.item.clone()
                 val meta = item.itemMeta
                 meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),
-                        Component.text("§a§l締切日:${data.value.month}/${data.value.day}").asComponent(),
-                        Component.text("§6§l報酬:${data.value.price}").asComponent(),
-                        Component.text("id:${data.key}").asComponent(),
-                        Component.text("Man10QuestItem").asComponent()))
+                        Component.text("§a§l締切日:${data.value.datetime.year}/${data.value.datetime.month}/${data.value.datetime.dayOfMonth}").asComponent(),
+                        Component.text("§6§l報酬:${data.value.price}").asComponent()))
+                meta.persistentDataContainer.set(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER,data.key)
                 item.itemMeta = meta
                 inv.setItem(int,item)
                 int += 1
@@ -103,15 +117,27 @@ class MQP : JavaPlugin(),Listener {
         }
         when(args[0]){
 
+            "tax"->{
+                if (sender.hasPermission("mq.op") || sender.isOp){
+                    if (args.size != 2)return true
+                    config.set("tax",args[1].toDoubleOrNull()?:return true)
+                    saveConfig()
+                    sender.sendmsg("§btaxを${args[1].toDouble()}に設定しました")
+                }
+            }
             "mode"->{
                 if (sender.hasPermission("mq.op") || sender.isOp){
                     return if (enable){
                         enable = false
-                        sender.sendmsg("modeをoffにしました")
+                        config.set("mode",false)
+                        saveConfig()
+                        sender.sendmsg("§bmodeをoffにしました")
                         true
                     }else{
                         enable = true
-                        sender.sendmsg("modeをonにしました")
+                        config.set("mode",true)
+                        saveConfig()
+                        sender.sendmsg("§bmodeをonにしました")
                         true
                     }
                 }
@@ -124,8 +150,15 @@ class MQP : JavaPlugin(),Listener {
                     §a/mq add (期日(1~12)) (個数(64~2304)) (報酬(10000~)) 手に持ったアイテムを依頼します
                     §a/mq order 自分の依頼を確認します(また、受取可能なものをクリックすると受け取れます)
                     §a§l==========================Man10Quest=========Author:tororo_1066
-                   
                 """.trimIndent())
+                if (sender.hasPermission("mq.op")){
+                    sender.sendMessage("""
+                        §c§l/mq mode モードを切り替えます
+                        §c§l/mq tax (Double) 手数料を設定します(1ヵ月ごとに増える)
+                        ${datamap.values}
+                    """.trimIndent())
+
+                }
             }
 
             "add" -> {
@@ -163,24 +196,27 @@ class MQP : JavaPlugin(),Listener {
                     sender.sendmsg("§4依頼を出した件数が54件以上です")
                     return true
                 }
-                if (vault.getBalance(sender.uniqueId) < args[3].toDouble()) {
+                if (vault.getBalance(sender.uniqueId) < args[3].toDouble() + tax * args[1].toDouble()) {
                     sender.sendmsg("§4所持金が不足しています")
                     return true
                 }
                 es.execute {
+                    val year = LocalDate.now().year
+                    val month = LocalDate.now().monthValue
+                    val day = LocalDate.now().dayOfMonth
                     val mysql = MySQLManager(this, "mqqQuestAdd")
-                    if (mysql.execute("INSERT INTO mqp (owner, item, amount, price, month, day, boolean) VALUES ('${sender.uniqueId}', '${itemToBase64(sender.inventory.itemInMainHand)}', ${args[2].toInt()}, ${args[3].toInt()}, ${ZonedDateTime.now().monthValue + args[1].toInt()}, ${ZonedDateTime.now().dayOfMonth}, 'false');")) {
-                        vault.withdraw(sender.uniqueId,args[3].toDouble())
+                    if (mysql.execute("INSERT INTO mqp (owner, item, amount, price, date, boolean) VALUES ('${sender.uniqueId}', '${itemToBase64(sender.inventory.itemInMainHand)}', ${args[2].toInt()}, ${args[3].toInt()}, '${if (month + args[1].toInt() >= 13) year+1 else year}-${if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt()}-${day}', 0);")) {
+                        vault.withdraw(sender.uniqueId,args[3].toDouble() + tax * args[1].toDouble())
                         val rs = mysql.query("SELECT * FROM mqp")
                         while (rs?.next() == true){
                             if (rs.isLast){
-                                datamap[rs.getInt("id")] = MQPData(sender, sender.inventory.itemInMainHand, args[2].toInt(), args[3].toInt(), ZonedDateTime.now().monthValue + args[1].toInt(), ZonedDateTime.now().dayOfMonth, false)
+                                datamap[rs.getInt("id")] = MQPData(sender, sender.inventory.itemInMainHand, args[2].toInt(), args[3].toInt(), LocalDate.of(if (month + args[1].toInt() >= 13)year+1 else year, if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt(), day), 0)
                             }
                         }
 
                         sender.sendmsg("§a依頼を出すことに成功しました！")
                         Bukkit.getScheduler().runTask(this, Runnable {
-                            Bukkit.broadcastMessage("$prefix §d種類:${sender.inventory.itemInMainHand.type.name}(§r${sender.inventory.itemInMainHand.itemMeta.displayName}§d)§fが§b個数:${args[2].toInt()}で出されました！§a(期日:${ZonedDateTime.now().monthValue + args[1].toInt()}/${ZonedDateTime.now().dayOfMonth}まで)§6(報酬:${args[3].toInt()})")
+                            Bukkit.broadcastMessage("$prefix §d種類:${sender.inventory.itemInMainHand.type.name}(§r${sender.inventory.itemInMainHand.itemMeta.displayName}§d)§fが§b個数:${args[2].toInt()}で出されました！§a(期日:${if (month + args[1].toInt() >= 13) year+1 else year}/${if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt()}/${day}まで)§6(報酬:${args[3].toInt()})")
                         })
                     } else {
                         sender.sendmsg("§4依頼を出すことに失敗しました")
@@ -195,9 +231,14 @@ class MQP : JavaPlugin(),Listener {
                 var int = 0
                 for (data in datamap){
                     if (data.value.owner != sender)continue
+                    if (data.value.boolean == 2)continue
                     val item = data.value.item.clone()
                     val meta = item.itemMeta
-                    meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),Component.text("§a§l締切日:${data.value.month}/${data.value.day}").asComponent(),Component.text("§6§l報酬:${data.value.price}").asComponent(), Component.text("§d§l受け取り:${if (data.value.boolean){"可能"}else{"まだ"}}"), Component.text("id:${data.key}"),Component.text("Man10QuestItem").asComponent()))
+                    meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),
+                            Component.text("§a§l締切日:${data.value.datetime.year}/${data.value.datetime.monthValue}/${data.value.datetime.dayOfMonth}").asComponent(),
+                            Component.text("§6§l報酬:${data.value.price}").asComponent(),
+                            Component.text("§d§l受け取り:${if (data.value.boolean == 1){"可能"}else{"まだ"}}")))
+                    meta.persistentDataContainer.set(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER,data.key)
                     item.itemMeta = meta
                     inv.setItem(int,item)
                     int += 1
@@ -207,7 +248,7 @@ class MQP : JavaPlugin(),Listener {
             "getorderitem","orderitem"->{
                 if (args.size != 2)return true
                 try {
-                    if (!datamap[args[1].toIntOrNull()?:return true]?.boolean!! || datamap[args[1].toInt()]?.owner != sender){
+                    if (datamap[args[1].toIntOrNull()?:return true]?.boolean!! == 0 || datamap[args[1].toInt()]?.owner != sender){
                         sender.sendmsg("§4このアイテムは受け取り出来ません")
                         return true
                     }
@@ -253,16 +294,16 @@ class MQP : JavaPlugin(),Listener {
                     p.openInventory(pageopen(p,page+1))
                 }
             }
-            if (e.currentItem != null && e.currentItem?.hasItemMeta() == true && e.currentItem?.itemMeta?.lore()?.get(4)?.toString()?.contains("Man10QuestItem") == true){
+            if (e.currentItem != null && e.currentItem?.hasItemMeta() == true && e.currentItem?.itemMeta?.persistentDataContainer?.get(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER) != null){
 
-                val inv = Bukkit.createInventory(null,36, Component.text("$prefix 納品box id: ${e.currentItem?.itemMeta?.lore()?.get(3)?.toString()?.split("\"")?.get(1)?.replace("id:","")} (インベントリを閉じて納品する)"))
+                val inv = Bukkit.createInventory(null,36, Component.text("$prefix 納品box id: ${e.currentItem?.itemMeta?.persistentDataContainer?.get(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER)} (インベントリを閉じて納品する)"))
                 p.openInventory(inv)
             }
             return
         }
         if (e.view.title().toString().contains("自分の依頼") && e.clickedInventory?.type != InventoryType.PLAYER){
             e.isCancelled = true
-            Bukkit.dispatchCommand(p,"mq orderitem ${e.currentItem?.itemMeta?.lore()?.get(4)?.toString()?.split("\"")?.get(1)?.replace("id:","")?.toInt()}")
+            Bukkit.dispatchCommand(p,"mq orderitem ${e.currentItem?.itemMeta?.persistentDataContainer?.get(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER)}")
         }
         if (p.openInventory.title().toString().contains("受取box") && e.clickedInventory?.type == InventoryType.PLAYER){
             e.isCancelled = true
@@ -303,8 +344,8 @@ class MQP : JavaPlugin(),Listener {
                 }
                 es.execute {
                     val mysql = MySQLManager(this,"mqpQuestSuccess")
-                    mysql.execute("UPDATE mqp SET boolean = 'true' WHERE id = ${id};")
-                    val savedata = MQPData(datamap[id]?.owner!!,datamap[id]?.item!!,datamap[id]?.amount!!,datamap[id]?.price!!,datamap[id]?.month!!,datamap[id]?.day!!,true)
+                    mysql.execute("UPDATE mqp SET boolean = 1 WHERE id = ${id};")
+                    val savedata = MQPData(datamap[id]?.owner!!,datamap[id]?.item!!,datamap[id]?.amount!!,datamap[id]?.price!!,datamap[id]?.datetime!!,1)
                     datamap.remove(id)
                     datamap[id] = savedata
                     mysql.close()
@@ -333,12 +374,12 @@ class MQP : JavaPlugin(),Listener {
                 val mysql = MySQLManager(this,"mqpCloseMenu")
                 if (amount == 0){
                     datamap.remove(id)
-                    mysql.execute("DELETE FROM mqp WHERE id = $id;")
+                    mysql.execute("UPDATE mqp SET boolean = 2 WHERE id = $id;")
                     return@execute
                 }
                 mysql.execute("UPDATE mqp SET amount = $amount WHERE id = $id;")
                 mysql.close()
-                val savedata = MQPData(datamap[id]?.owner!!,datamap[id]?.item!!,amount,datamap[id]?.price!!,datamap[id]?.month!!,datamap[id]?.day!!,datamap[id]?.boolean!!)
+                val savedata = MQPData(datamap[id]?.owner!!,datamap[id]?.item!!,amount,datamap[id]?.price!!,datamap[id]?.datetime!!,datamap[id]?.boolean!!)
                 datamap.remove(id)
                 datamap[id] = savedata
                 return@execute
@@ -358,11 +399,14 @@ class MQP : JavaPlugin(),Listener {
                 continue
             }
             if (inv.getItem(53) != null)break
-            if (data.value.boolean)continue
+            if (data.value.boolean > 0)continue
             if (data.value.owner == p)continue
             val item = data.value.item.clone()
             val meta = item.itemMeta
-            meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),Component.text("§a§l締切日:${data.value.month}/${data.value.day}").asComponent(),Component.text("§6§l報酬:${data.value.price}").asComponent(),Component.text("id:${data.key}").asComponent(),Component.text("Man10QuestItem").asComponent()))
+            meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),
+                    Component.text("§a§l締切日:${data.value.datetime.year}/${data.value.datetime.monthValue}/${data.value.datetime.dayOfMonth}").asComponent(),
+                    Component.text("§6§l報酬:${data.value.price}").asComponent()))
+            meta.persistentDataContainer.set(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER,data.key)
             item.itemMeta = meta
             inv.setItem(int-((i-1)*54),item)
             int += 1

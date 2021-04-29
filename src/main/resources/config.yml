@@ -4,3 +4,5 @@ mysql:
   port: 3306
   pass: pass
   db: mqp
+mode: true
+tax: 1000
