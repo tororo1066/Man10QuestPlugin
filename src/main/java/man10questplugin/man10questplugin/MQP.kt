@@ -32,13 +32,15 @@ class MQP : JavaPlugin(),Listener {
     private lateinit var es : ExecutorService
     private val prefix = "§f[§d§lMan10§a§lQuest§f]§r"
     private val datamap = HashMap<Int,MQPData>()
-    private val vault = VaultManager(this)
+    private lateinit var vault : VaultManager
+    private var enable = true
 
 
     override fun onEnable() {
         saveDefaultConfig()
         server.pluginManager.registerEvents(this,this)
         getCommand("mq")?.setExecutor(this)
+        vault = VaultManager(this)
         es = Executors.newCachedThreadPool()
         val mysql = MySQLManager(this,"mqp")
         mysql.execute("CREATE TABLE IF NOT EXISTS `mqp` (\n" +
@@ -65,6 +67,18 @@ class MQP : JavaPlugin(),Listener {
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
         if (sender !is Player)return true
+        if (!sender.hasPermission("mq.command")){
+            if (!sender.hasPermission("mq.op")) {
+                sender.sendmsg("§4ゆーどんとはぶぱーみっしょん")
+                return true
+            }
+        }
+        if (!sender.isOp || !sender.hasPermission("mq.op")){
+            if (!enable){
+                sender.sendmsg("§4もーどいずふぁあす")
+                return true
+            }
+        }
         if (args.isEmpty()) {
             val inv = Bukkit.createInventory(null,54, Component.text("$prefix 依頼一覧 page 1"))
             var int = 0
@@ -85,6 +99,19 @@ class MQP : JavaPlugin(),Listener {
         }
         when(args[0]){
 
+            "mode"->{
+                if (sender.hasPermission("mq.op") || sender.isOp){
+                    return if (enable){
+                        enable = false
+                        sender.sendmsg("modeをoffにしました")
+                        true
+                    }else{
+                        enable = true
+                        sender.sendmsg("modeをonにしました")
+                        true
+                    }
+                }
+            }
             "help"->{
                 sender.sendMessage("""
                     §a§l==========================Man10Quest===========================
@@ -148,6 +175,9 @@ class MQP : JavaPlugin(),Listener {
                         }
 
                         sender.sendmsg("§a依頼を出すことに成功しました！")
+                        Bukkit.getScheduler().runTask(this, Runnable {
+                            Bukkit.broadcastMessage("$prefix §d種類:${sender.inventory.itemInMainHand.type.name}(§r${sender.inventory.itemInMainHand.itemMeta.displayName}§d)§fが§b個数:${args[2].toInt()}で出されました！§a(期日:${ZonedDateTime.now().monthValue + args[1].toInt()}/${ZonedDateTime.now().dayOfMonth}まで)§6(報酬:${args[3].toInt()})")
+                        })
                     } else {
                         sender.sendmsg("§4依頼を出すことに失敗しました")
                     }
@@ -281,6 +311,7 @@ class MQP : JavaPlugin(),Listener {
             }else{
                 for (item in e.inventory.contents){
                     if (item == null)continue
+                    if (datamap[id]?.item != item)continue
                     p.world.dropItemNaturally(p.location,item)
                 }
             }
