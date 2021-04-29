@@ -201,46 +201,54 @@ class MQP : JavaPlugin(),Listener {
                     sender.sendmsg("§4所持金が不足しています")
                     return true
                 }
+
+                val price = args[3].toInt()
+                val amount = args[2].toInt()
+                val month = args[1].toInt()
+
                 es.execute {
 
                     val cal = Calendar.getInstance()
                     cal.time = Date()
 
-                    cal.add(Calendar.MONTH,args[1].toInt())
+                    cal.add(Calendar.MONTH,month)
 
                     val mysql = MySQLManager(this, "mqqQuestAdd")
                     mysql.execute("INSERT INTO mqp (owner, item, amount, price, date, boolean) " +
                             "VALUES ('${sender.uniqueId}', " +
                             "'${itemToBase64(sender.inventory.itemInMainHand)}', " +
-                            "${args[2].toInt()}, " +
-                            "${args[3].toInt()}, " +
+                            "${amount}, " +
+                            "${price}, " +
                             "'${sdf.format(cal.time)}', 0);")
 
-                    val rs = mysql.query("SELECT id FROM mqp ORDER BY id DESC LIMIT 1;")
+                    val rs = mysql.query("SELECT id,date FROM mqp ORDER BY id DESC LIMIT 1;")
 
-                    if (rs != null) {
-
-                        vault.withdraw(sender.uniqueId,args[3].toDouble() + tax * args[1].toDouble())
-                        while (rs.next()){
-                            datamap[rs.getInt("id")] = MQPData(sender, sender.inventory.itemInMainHand,
-                                    args[2].toInt(), args[3].toInt(),
-                                    rs.getDate("datetime"),
-                                    0)
-                        }
-
-                        rs.close()
-
-                        sender.sendmsg("§a依頼を出すことに成功しました！")
-                        Bukkit.getScheduler().runTask(this, Runnable {
-                            Bukkit.broadcastMessage("$prefix §d種類:${sender.inventory.itemInMainHand.type.name}" +
-                                    "(§r${sender.inventory.itemInMainHand.itemMeta.displayName}§d)§fが§b個数:${args[2].toInt()}で出されました！" +
-                                    "§a(期日:${sdf.format(cal.time)}まで)" +
-                                    "§6(報酬:${args[3].toInt()})")
-                        })
-                    } else {
+                    if (rs == null) {
                         sender.sendmsg("§4依頼を出すことに失敗しました")
+                        return@execute
                     }
+
+                    vault.withdraw(sender.uniqueId,price + tax * args[1].toDouble())
+
+                    while (rs.next()){
+                        datamap[rs.getInt("id")] = MQPData(sender, sender.inventory.itemInMainHand,
+                            amount, price,
+                            rs.getDate("date"),
+                            0)
+                    }
+
+                    rs.close()
                     mysql.close()
+
+                    sender.sendmsg("§a依頼を出すことに成功しました！")
+
+                    Bukkit.getScheduler().runTask(this, Runnable {
+                        Bukkit.broadcastMessage("$prefix §d種類:${sender.inventory.itemInMainHand.type.name}" +
+                                "(§r${sender.inventory.itemInMainHand.itemMeta.displayName}§d)§fが§b個数:${amount}で出されました！" +
+                                "§a(期日:${sdf.format(cal.time)}まで)" +
+                                "§6(報酬:${price})")
+                    })
+
                     return@execute
                 }
             }
