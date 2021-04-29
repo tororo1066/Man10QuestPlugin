@@ -21,6 +21,7 @@ import org.bukkit.util.io.BukkitObjectOutputStream
 import org.yaml.snakeyaml.external.biz.base64Coder.Base64Coder
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -30,7 +31,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.collections.HashMap
 
-class MQPData(val owner: Player, val item: ItemStack, val amount: Int, val price: Int, val datetime : LocalDate, val boolean: Int)
+class MQPData(val owner: Player, val item: ItemStack, val amount: Int, val price: Int, val datetime : Date, val boolean: Int)
 
 class MQP : JavaPlugin(),Listener {
     private lateinit var es : ExecutorService
@@ -39,6 +40,8 @@ class MQP : JavaPlugin(),Listener {
     private lateinit var vault : VaultManager
     private var tax = 0.00
     private var enable = true
+
+    private val sdf = SimpleDateFormat("yyyy-MM-dd")
 
 
     override fun onEnable() {
@@ -65,17 +68,18 @@ class MQP : JavaPlugin(),Listener {
                 ";")
 
         val rs = mysql.query("SELECT * FROM mqp;")
-        val year = LocalDate.now().year
-        val month = LocalDate.now().monthValue
-        val day = LocalDate.now().dayOfMonth
-        mysql.execute("UPDATE mqp SET boolean = 2 WHERE date >= '${year}-${month}-${day}';")
+        mysql.execute("UPDATE mqp SET boolean = 2 WHERE date >= '${sdf.format(Date())}';")
         while (rs?.next() == true){
-            Bukkit.getPlayer(UUID.fromString(rs.getString("owner")))?.let { itemFromBase64(rs.getString("item"))?.let { it1 -> MQPData(it, it1,rs.getInt("amount"),
-                    rs.getInt("price"),
-                    LocalDate.of(rs.getString("date").split("-")[0].toInt(),
-                            rs.getString("date").split("-")[1].toInt(),
-                            rs.getString("date").split("-")[2].toInt()),
-                    rs.getInt("boolean")) } }?.let { datamap.put(rs.getInt("id"),it) }
+            Bukkit.getPlayer(UUID.fromString(rs.getString("owner")))?.let {
+                itemFromBase64(rs.getString("item"))?.let { it1 -> MQPData(it, it1,
+                rs.getInt("amount"),
+                rs.getInt("price"),
+//                    LocalDate.of(rs.getString("date").split("-")[0].toInt(),
+//                            rs.getString("date").split("-")[1].toInt(),
+//                            rs.getString("date").split("-")[2].toInt()),
+                rs.getDate("date"),
+                rs.getInt("boolean")) } }?.let { datamap.put(rs.getInt("id"),it) }
+
 
         }
     }
@@ -84,13 +88,13 @@ class MQP : JavaPlugin(),Listener {
         if (sender !is Player)return true
         if (!sender.hasPermission("mq.command")){
             if (!sender.hasPermission("mq.op")) {
-                sender.sendmsg("§4ゆーどんとはぶぱーみっしょん")
+                sender.sendmsg("§4クエストの権限がない！")
                 return true
             }
         }
         if (!sender.isOp && !sender.hasPermission("mq.op")){
             if (!enable){
-                sender.sendmsg("§4もーどいずふぁあす")
+                sender.sendmsg("§4クエストが閉まってる！")
                 return true
             }
         }
@@ -105,7 +109,7 @@ class MQP : JavaPlugin(),Listener {
                 val item = data.value.item.clone()
                 val meta = item.itemMeta
                 meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),
-                        Component.text("§a§l締切日:${data.value.datetime.year}/${data.value.datetime.month}/${data.value.datetime.dayOfMonth}").asComponent(),
+                        Component.text("§a§l締切日:${sdf.format(data.value.datetime)}").asComponent(),
                         Component.text("§6§l報酬:${data.value.price}").asComponent()))
                 meta.persistentDataContainer.set(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER,data.key)
                 item.itemMeta = meta
@@ -202,28 +206,39 @@ class MQP : JavaPlugin(),Listener {
                     return true
                 }
                 es.execute {
-                    val year = LocalDate.now().year
-                    val month = LocalDate.now().monthValue
-                    val day = LocalDate.now().dayOfMonth
+
+                    val cal = Calendar.getInstance()
+                    cal.time = Date()
+
+                    cal.add(Calendar.MONTH,args[1].toInt())
+
                     val mysql = MySQLManager(this, "mqqQuestAdd")
-                    if (mysql.execute("INSERT INTO mqp (owner, item, amount, price, date, boolean) VALUES ('${sender.uniqueId}', '${itemToBase64(sender.inventory.itemInMainHand)}', ${args[2].toInt()}, ${args[3].toInt()}, '${if (month + args[1].toInt() >= 13) year+1 else year}-${if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt()}-${day}', 0);")) {
+                    mysql.execute("INSERT INTO mqp (owner, item, amount, price, date, boolean) " +
+                            "VALUES ('${sender.uniqueId}', " +
+                            "'${itemToBase64(sender.inventory.itemInMainHand)}', " +
+                            "${args[2].toInt()}, " +
+                            "${args[3].toInt()}, " +
+                            "'${sdf.format(cal.time)}', 0);")
+
+                    val rs = mysql.query("SELECT id FROM mqp ORDER BY id DESC LIMIT 1;")
+
+                    if (rs != null) {
+
                         vault.withdraw(sender.uniqueId,args[3].toDouble() + tax * args[1].toDouble())
-                        val rs = mysql.query("SELECT id FROM mqp ORDER BY id DESC LIMIT 1;")
-                        while (rs?.next() == true){
-                            datamap[rs?.getInt("id")!!] = MQPData(sender, sender.inventory.itemInMainHand,
+                        while (rs.next()){
+                            datamap[rs.getInt("id")] = MQPData(sender, sender.inventory.itemInMainHand,
                                     args[2].toInt(), args[3].toInt(),
-                                    LocalDate.of(if (month + args[1].toInt() >= 13)year+1 else year,
-                                            if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt(),
-                                            day),
+                                    rs.getDate("datetime"),
                                     0)
                         }
+
+                        rs.close()
+
                         sender.sendmsg("§a依頼を出すことに成功しました！")
                         Bukkit.getScheduler().runTask(this, Runnable {
                             Bukkit.broadcastMessage("$prefix §d種類:${sender.inventory.itemInMainHand.type.name}" +
                                     "(§r${sender.inventory.itemInMainHand.itemMeta.displayName}§d)§fが§b個数:${args[2].toInt()}で出されました！" +
-                                    "§a(期日:${if (month + args[1].toInt() >= 13) year+1 else year}/" +
-                                    "${if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt()}/" +
-                                    "${day}まで)" +
+                                    "§a(期日:${sdf.format(cal.time)}まで)" +
                                     "§6(報酬:${args[3].toInt()})")
                         })
                     } else {
@@ -243,7 +258,7 @@ class MQP : JavaPlugin(),Listener {
                     val item = data.value.item.clone()
                     val meta = item.itemMeta
                     meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),
-                            Component.text("§a§l締切日:${data.value.datetime.year}/${data.value.datetime.monthValue}/${data.value.datetime.dayOfMonth}").asComponent(),
+                            Component.text("§a§l締切日:${sdf.format(data.value.datetime)}").asComponent(),
                             Component.text("§6§l報酬:${data.value.price}").asComponent(),
                             Component.text("§d§l受け取り:${if (data.value.boolean == 1){"可能"}else{"まだ"}}")))
                     meta.persistentDataContainer.set(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER,data.key)
@@ -387,9 +402,8 @@ class MQP : JavaPlugin(),Listener {
                 }
                 mysql.execute("UPDATE mqp SET amount = $amount WHERE id = $id;")
                 mysql.close()
-                val savedata = MQPData(datamap[id]?.owner!!,datamap[id]?.item!!,amount,datamap[id]?.price!!,datamap[id]?.datetime!!,datamap[id]?.boolean!!)
                 datamap.remove(id)
-                datamap[id] = savedata
+                datamap[id] = MQPData(datamap[id]?.owner!!,datamap[id]?.item!!,amount,datamap[id]?.price!!,datamap[id]?.datetime!!,datamap[id]?.boolean!!)
                 return@execute
             }
             return
@@ -412,7 +426,7 @@ class MQP : JavaPlugin(),Listener {
             val item = data.value.item.clone()
             val meta = item.itemMeta
             meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),
-                    Component.text("§a§l締切日:${data.value.datetime.year}/${data.value.datetime.monthValue}/${data.value.datetime.dayOfMonth}").asComponent(),
+                    Component.text("§a§l締切日:${sdf.format(data.value.datetime)}").asComponent(),
                     Component.text("§6§l報酬:${data.value.price}").asComponent()))
             meta.persistentDataContainer.set(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER,data.key)
             item.itemMeta = meta
