@@ -88,7 +88,11 @@ class MQP : JavaPlugin(),Listener {
                 if (data.value.owner == sender)continue
                 val item = data.value.item.clone()
                 val meta = item.itemMeta
-                meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),Component.text("§a§l締切日:${data.value.month}/${data.value.day}").asComponent(),Component.text("§6§l報酬:${data.value.price}").asComponent(),Component.text("id:${data.key}").asComponent(),Component.text("Man10QuestItem").asComponent()))
+                meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),
+                        Component.text("§a§l締切日:${data.value.month}/${data.value.day}").asComponent(),
+                        Component.text("§6§l報酬:${data.value.price}").asComponent(),
+                        Component.text("id:${data.key}").asComponent(),
+                        Component.text("Man10QuestItem").asComponent()))
                 item.itemMeta = meta
                 inv.setItem(int,item)
                 int += 1
