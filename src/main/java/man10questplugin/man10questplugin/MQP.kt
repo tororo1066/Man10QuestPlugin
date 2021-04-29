@@ -25,6 +25,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.collections.HashMap
@@ -34,7 +35,7 @@ class MQPData(val owner: Player, val item: ItemStack, val amount: Int, val price
 class MQP : JavaPlugin(),Listener {
     private lateinit var es : ExecutorService
     private val prefix = "§f[§d§lMan10§a§lQuest§f]§r"
-    private val datamap = HashMap<Int,MQPData>()
+    private val datamap = ConcurrentHashMap<Int,MQPData>()
     private lateinit var vault : VaultManager
     private var tax = 0.00
     private var enable = true
@@ -87,7 +88,7 @@ class MQP : JavaPlugin(),Listener {
                 return true
             }
         }
-        if (!sender.isOp || !sender.hasPermission("mq.op")){
+        if (!sender.isOp && !sender.hasPermission("mq.op")){
             if (!enable){
                 sender.sendmsg("§4もーどいずふぁあす")
                 return true
@@ -207,16 +208,23 @@ class MQP : JavaPlugin(),Listener {
                     val mysql = MySQLManager(this, "mqqQuestAdd")
                     if (mysql.execute("INSERT INTO mqp (owner, item, amount, price, date, boolean) VALUES ('${sender.uniqueId}', '${itemToBase64(sender.inventory.itemInMainHand)}', ${args[2].toInt()}, ${args[3].toInt()}, '${if (month + args[1].toInt() >= 13) year+1 else year}-${if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt()}-${day}', 0);")) {
                         vault.withdraw(sender.uniqueId,args[3].toDouble() + tax * args[1].toDouble())
-                        val rs = mysql.query("SELECT * FROM mqp")
+                        val rs = mysql.query("SELECT id FROM mqp ORDER BY id DESC LIMIT 1;")
                         while (rs?.next() == true){
-                            if (rs.isLast){
-                                datamap[rs.getInt("id")] = MQPData(sender, sender.inventory.itemInMainHand, args[2].toInt(), args[3].toInt(), LocalDate.of(if (month + args[1].toInt() >= 13)year+1 else year, if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt(), day), 0)
-                            }
+                            datamap[rs?.getInt("id")!!] = MQPData(sender, sender.inventory.itemInMainHand,
+                                    args[2].toInt(), args[3].toInt(),
+                                    LocalDate.of(if (month + args[1].toInt() >= 13)year+1 else year,
+                                            if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt(),
+                                            day),
+                                    0)
                         }
-
                         sender.sendmsg("§a依頼を出すことに成功しました！")
                         Bukkit.getScheduler().runTask(this, Runnable {
-                            Bukkit.broadcastMessage("$prefix §d種類:${sender.inventory.itemInMainHand.type.name}(§r${sender.inventory.itemInMainHand.itemMeta.displayName}§d)§fが§b個数:${args[2].toInt()}で出されました！§a(期日:${if (month + args[1].toInt() >= 13) year+1 else year}/${if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt()}/${day}まで)§6(報酬:${args[3].toInt()})")
+                            Bukkit.broadcastMessage("$prefix §d種類:${sender.inventory.itemInMainHand.type.name}" +
+                                    "(§r${sender.inventory.itemInMainHand.itemMeta.displayName}§d)§fが§b個数:${args[2].toInt()}で出されました！" +
+                                    "§a(期日:${if (month + args[1].toInt() >= 13) year+1 else year}/" +
+                                    "${if (month + args[1].toInt() >= 13) month + args[1].toInt() - 12 else month + args[1].toInt()}/" +
+                                    "${day}まで)" +
+                                    "§6(報酬:${args[3].toInt()})")
                         })
                     } else {
                         sender.sendmsg("§4依頼を出すことに失敗しました")
