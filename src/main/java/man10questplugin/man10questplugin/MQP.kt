@@ -343,6 +343,11 @@ class MQP : JavaPlugin(),Listener {
         val p = e.player as Player
         if (e.view.title().toString().contains("納品box")){
             val id = e.view.title().toString().split(" ")[3].toInt()
+            if (datamap[id]?.boolean != 0){
+                for (item in e.inventory.contents){
+                    p.world.dropItemNaturally(p.location,item)
+                }
+            }
             var amount = 0
             for (item in e.inventory.contents){
                 if (item == null || item.type == Material.AIR)continue
