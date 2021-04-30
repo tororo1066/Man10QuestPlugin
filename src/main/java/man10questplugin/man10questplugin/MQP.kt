@@ -35,7 +35,9 @@ class MQP : JavaPlugin(),Listener {
     private val datamap = ConcurrentHashMap<Int,MQPData>()
     private lateinit var vault : VaultManager
     private var tax = 0.00
+    private var cancel = 0.00
     private var enable = true
+    private var wait = false
 
     private val sdf = SimpleDateFormat("yyyy-MM-dd")
 
@@ -48,6 +50,7 @@ class MQP : JavaPlugin(),Listener {
         es = Executors.newCachedThreadPool()
         enable = config.getBoolean("mode")
         tax = config.getDouble("tax")
+        cancel = config.getDouble("cancel")
         val mysql = MySQLManager(this,"mqp")
         mysql.execute("CREATE TABLE IF NOT EXISTS`mqp` (\n" +
                 "\t`id` INT NOT NULL AUTO_INCREMENT,\n" +
@@ -96,6 +99,11 @@ class MQP : JavaPlugin(),Listener {
         }
 
         if (args.isEmpty()) {
+            if (wait){
+                sender.sendmsg("§4少し待ってから再試行してください")
+                return true
+            }
+            wait = true
             val inv = Bukkit.createInventory(null,54, Component.text("$prefix 依頼一覧 page 1"))
             var int = 0
             for (data in datamap){
@@ -113,7 +121,7 @@ class MQP : JavaPlugin(),Listener {
                 int += 1
             }
             sender.openInventory(inv)
-
+            wait = false
             return true
         }
         when(args[0]){
@@ -124,6 +132,15 @@ class MQP : JavaPlugin(),Listener {
                     config.set("tax",args[1].toDoubleOrNull()?:return true)
                     saveConfig()
                     sender.sendmsg("§btaxを${args[1].toDouble()}に設定しました")
+                }
+            }
+
+            "canceltax"->{
+                if (sender.hasPermission("mq.op") || sender.isOp){
+                    if (args.size != 2)return true
+                    config.set("cancel",args[1].toDoubleOrNull()?:return true)
+                    saveConfig()
+                    sender.sendmsg("§bcancelを${args[1].toDouble()}に設定しました")
                 }
             }
             "mode"->{
@@ -156,6 +173,8 @@ class MQP : JavaPlugin(),Listener {
                     sender.sendMessage("""
                         §c§l/mq mode モードを切り替えます
                         §c§l/mq tax (Double) 手数料を設定します(1ヵ月ごとに増える)
+                        §c§l/mq canceltax (Double) キャンセルまたは期限切れの時の返却金を設定します
+                        §c§l(1が最大、0が最低)
                         ${datamap.values}
                     """.trimIndent())
 
@@ -163,6 +182,7 @@ class MQP : JavaPlugin(),Listener {
             }
 
             "add" -> {
+
                 if (args.size != 4) {
                     sender.sendmsg("/mq add (何か月(1~12)) (個数64~2304) (報酬10000~)")
                     return true
@@ -188,6 +208,11 @@ class MQP : JavaPlugin(),Listener {
                     sender.sendmsg("手にアイテムを持ってください！")
                     return true
                 }
+                if (wait){
+                    sender.sendmsg("§4少し待ってから再試行してください")
+                    return true
+                }
+                wait = true
                 sender.sendmsg("依頼を出しています...")
                 var int = 0
                 for (d in datamap){
@@ -251,14 +276,27 @@ class MQP : JavaPlugin(),Listener {
 
                     return@execute
                 }
+                wait = false
             }
 
             "order"->{
+                if (wait){
+                    sender.sendmsg("§4少し待ってから再試行してください")
+                    return true
+                }
+                wait = true
                 val inv = Bukkit.createInventory(null,54, Component.text("$prefix 自分の依頼"))
                 var int = 0
                 for (data in datamap){
                     if (data.value.owner != sender)continue
                     if (data.value.boolean == 2)continue
+                    if (data.value.boolean == 3){
+                        es.execute {
+                            val mysql = MySQLManager(this,"mqQuestFailed")
+                            mysql.execute("UPDATE mqp SET boolean = 2 WHERE id = ${data.key}")
+                            vault.deposit(sender.uniqueId,data.value.price*cancel)
+                        }
+                    }
                     val item = data.value.item.clone()
                     val meta = item.itemMeta
                     meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),
@@ -271,8 +309,15 @@ class MQP : JavaPlugin(),Listener {
                     int += 1
                 }
                 sender.openInventory(inv)
+                wait = false
+                return true
             }
             "getorderitem","orderitem"->{
+                if (wait){
+                    sender.sendmsg("§4少し待ってから再試行してください")
+                    return true
+                }
+                wait = true
                 if (args.size != 2)return true
                 try {
                     if (datamap[args[1].toIntOrNull()?:return true]?.boolean!! == 0 || datamap[args[1].toInt()]?.owner != sender){
@@ -299,6 +344,7 @@ class MQP : JavaPlugin(),Listener {
                 inv.addItem(item!!)
 
                 sender.openInventory(inv)
+                wait = false
             }
         }
         return true
@@ -314,11 +360,11 @@ class MQP : JavaPlugin(),Listener {
             when(e.hotbarButton){
                 0 ->{
                     if (page == 1)return
-                    p.openInventory(pageopen(p,page-1))
+                    p.openInventory(pageopen(p,page-1)?:return)
                 }
                 1 ->{
                     if (datamap.size < page * 53)return
-                    p.openInventory(pageopen(p,page+1))
+                    p.openInventory(pageopen(p,page+1)?:return)
                 }
             }
             if (e.currentItem != null && e.currentItem?.hasItemMeta() == true && e.currentItem?.itemMeta?.persistentDataContainer?.get(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER) != null){
@@ -405,14 +451,17 @@ class MQP : JavaPlugin(),Listener {
             es.execute {
                 val mysql = MySQLManager(this,"mqpCloseMenu")
                 if (amount == 0){
+                    val savedata = MQPData(datamap[id]?.owner!!,datamap[id]?.item!!,0,datamap[id]?.price!!,datamap[id]?.datetime!!,2)
                     datamap.remove(id)
+                    datamap[id] = savedata
                     mysql.execute("UPDATE mqp SET boolean = 2 WHERE id = $id;")
                     return@execute
                 }
                 mysql.execute("UPDATE mqp SET amount = $amount WHERE id = $id;")
                 mysql.close()
+                val savedata = MQPData(datamap[id]?.owner!!,datamap[id]?.item!!,amount,datamap[id]?.price!!,datamap[id]?.datetime!!,datamap[id]?.boolean!!)
                 datamap.remove(id)
-                datamap[id] = MQPData(datamap[id]?.owner!!,datamap[id]?.item!!,amount,datamap[id]?.price!!,datamap[id]?.datetime!!,datamap[id]?.boolean!!)
+                datamap[id] = savedata
                 return@execute
             }
             return
@@ -420,8 +469,12 @@ class MQP : JavaPlugin(),Listener {
     }
 
 
-    private fun pageopen(p : Player, i : Int): Inventory {
-
+    private fun pageopen(p : Player, i : Int): Inventory? {
+        if (wait){
+            p.sendmsg("§4少し待ってから再試行してください")
+            return null
+        }
+        wait = true
         val inv = Bukkit.createInventory(null,54, Component.text("$prefix 依頼一覧 page $i"))
         var int = 0
         for (data in datamap){
@@ -442,7 +495,7 @@ class MQP : JavaPlugin(),Listener {
             inv.setItem(int-((i-1)*54),item)
             int += 1
         }
-
+        wait = false
         return inv
     }
 
