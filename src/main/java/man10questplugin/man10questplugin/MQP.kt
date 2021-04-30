@@ -67,7 +67,7 @@ class MQP : JavaPlugin(),Listener {
                 ";")
 
         val rs = mysql.query("SELECT * FROM mqp;")
-        mysql.execute("UPDATE mqp SET boolean = 2 WHERE date >= '${sdf.format(Date())}';")
+        mysql.execute("UPDATE mqp SET boolean = 3 WHERE date >= '${sdf.format(Date())}' AND boolean = 0;")
         while (rs?.next() == true){
             Bukkit.getPlayer(UUID.fromString(rs.getString("owner")))?.let {
                 itemFromBase64(rs.getString("item"))?.let { it1 -> MQPData(it, it1,
@@ -164,9 +164,13 @@ class MQP : JavaPlugin(),Listener {
                 sender.sendMessage("""
                     §a§l==========================Man10Quest===========================
                     §a/mq クエスト一覧を表示します(1キーで前ページ、2キーで後ページに行けます
-                    §aまた、アイテムをクリックするとその納品boxが開かれます
+                    §a(また、アイテムをクリックするとその納品boxが開かれます)
+                    §a(そのboxにアイテムを必要個数入れるとクエスト達成となり、お金がもらえます)
                     §a/mq add (期日(1~12)) (個数(64~2304)) (報酬(10000~)) 手に持ったアイテムを依頼します
+                    §a(また、手数料として期間(1ヶ月単位)*${tax}円分引かれます
                     §a/mq order 自分の依頼を確認します(また、受取可能なものをクリックすると受け取れます)
+                    §a(さらに、シフトクリックすることでキャンセルができます)
+                    §a(キャンセルされた時に帰ってくる料金は報酬*${cancel}円です)
                     §a§l==========================Man10Quest=========Author:tororo_1066
                 """.trimIndent())
                 if (sender.hasPermission("mq.op")){
@@ -175,11 +179,12 @@ class MQP : JavaPlugin(),Listener {
                         §c§l/mq tax (Double) 手数料を設定します(1ヵ月ごとに増える)
                         §c§l/mq canceltax (Double) キャンセルまたは期限切れの時の返却金を設定します
                         §c§l(1が最大、0が最低)
-                        ${datamap.values}
                     """.trimIndent())
 
                 }
             }
+
+
 
             "add" -> {
 
@@ -295,6 +300,8 @@ class MQP : JavaPlugin(),Listener {
                             val mysql = MySQLManager(this,"mqQuestFailed")
                             mysql.execute("UPDATE mqp SET boolean = 2 WHERE id = ${data.key}")
                             vault.deposit(sender.uniqueId,data.value.price*cancel)
+                            sender.sendmsg("§d期限切れのアイテムがあったのでお金を返却しました")
+                            mysql.close()
                         }
                     }
                     val item = data.value.item.clone()
@@ -313,11 +320,7 @@ class MQP : JavaPlugin(),Listener {
                 return true
             }
             "getorderitem","orderitem"->{
-                if (wait){
-                    sender.sendmsg("§4少し待ってから再試行してください")
-                    return true
-                }
-                wait = true
+
                 if (args.size != 2)return true
                 try {
                     if (datamap[args[1].toIntOrNull()?:return true]?.boolean!! == 0 || datamap[args[1].toInt()]?.owner != sender){
@@ -328,7 +331,6 @@ class MQP : JavaPlugin(),Listener {
                     sender.sendmsg("§4このアイテムは受け取り出来ません")
                     return true
                 }
-
                 val inv = Bukkit.createInventory(null,36, Component.text("$prefix 受取box id: ${args[1].toInt()}"))
 
                 val item = datamap[args[1].toInt()]?.item?.clone()
@@ -344,7 +346,39 @@ class MQP : JavaPlugin(),Listener {
                 inv.addItem(item!!)
 
                 sender.openInventory(inv)
+            }
+            "cancel"->{
+                if (args.size != 2)return true
+                try {
+                    if (datamap[args[1].toIntOrNull()?:return true]?.boolean!! != 0 || datamap[args[1].toInt()]?.owner != sender){
+                        sender.sendmsg("§4このアイテムはキャンセルできません")
+                        return true
+                    }
+                }catch (e : NullPointerException){
+                    sender.sendmsg("§4ここのアイテムはキャンセルできません")
+                    return true
+                }
+                if (wait){
+                    sender.sendmsg("§4少し待ってから再試行してください")
+                    return true
+                }
+                wait = true
+                es.execute {
+                    val id = args[1].toInt()
+                    val mysql = MySQLManager(this,"mqQuestCancel")
+                    mysql.execute("UPDATE mqp SET boolean = 2 WHERE id = $id")
+                    val savedata = MQPData(datamap[id]?.owner!!,datamap[id]?.item!!,datamap[id]?.amount!!,datamap[id]?.price!!,datamap[id]?.datetime!!,2)
+                    datamap.remove(id)
+                    datamap[id] = savedata
+                    datamap[id]?.price?.times(cancel)?.let { vault.deposit(sender.uniqueId, it) }
+                    sender.sendmsg("§dクエストをキャンセルしました")
+                    mysql.close()
+                    return@execute
+                }
                 wait = false
+                return true
+
+
             }
         }
         return true
@@ -375,8 +409,13 @@ class MQP : JavaPlugin(),Listener {
             return
         }
         if (e.view.title().toString().contains("自分の依頼") && e.clickedInventory?.type != InventoryType.PLAYER){
-            e.isCancelled = true
-            Bukkit.dispatchCommand(p,"mq orderitem ${e.currentItem?.itemMeta?.persistentDataContainer?.get(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER)}")
+            if (e.isShiftClick){
+                e.isCancelled = true
+                Bukkit.dispatchCommand(p,"mq cancel ${e.currentItem?.itemMeta?.persistentDataContainer?.get(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER)}")
+            }else{
+                e.isCancelled = true
+                Bukkit.dispatchCommand(p,"mq orderitem ${e.currentItem?.itemMeta?.persistentDataContainer?.get(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER)}")
+            }
         }
         if (p.openInventory.title().toString().contains("受取box") && e.clickedInventory?.type == InventoryType.PLAYER){
             e.isCancelled = true
