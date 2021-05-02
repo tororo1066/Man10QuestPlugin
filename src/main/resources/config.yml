@@ -6,4 +6,3 @@ mysql:
   db: mqp
 mode: true
 tax: 1000
-cancel: 0.8

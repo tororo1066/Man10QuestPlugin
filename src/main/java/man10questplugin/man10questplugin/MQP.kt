@@ -71,13 +71,13 @@ class MQP : JavaPlugin(),Listener {
         while (rs?.next() == true){
             Bukkit.getPlayer(UUID.fromString(rs.getString("owner")))?.let {
                 itemFromBase64(rs.getString("item"))?.let { it1 -> MQPData(it, it1,
-                rs.getInt("amount"),
-                rs.getInt("price"),
+                        rs.getInt("amount"),
+                        rs.getInt("price"),
 //                    LocalDate.of(rs.getString("date").split("-")[0].toInt(),
 //                            rs.getString("date").split("-")[1].toInt(),
 //                            rs.getString("date").split("-")[2].toInt()),
-                rs.getDate("date"),
-                rs.getInt("boolean")) } }?.let { datamap.put(rs.getInt("id"),it) }
+                        rs.getDate("date"),
+                        rs.getInt("boolean")) } }?.let { datamap.put(rs.getInt("id"),it) }
 
 
         }
@@ -112,9 +112,14 @@ class MQP : JavaPlugin(),Listener {
                 if (data.value.owner == sender)continue
                 val item = data.value.item.clone()
                 val meta = item.itemMeta
-                meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),
-                        Component.text("§a§l締切日:${sdf.format(data.value.datetime)}").asComponent(),
-                        Component.text("§6§l報酬:${data.value.price}").asComponent()))
+                try {
+                    meta.lore(mutableListOf(Component.text("§b§l必要数:${data.value.amount}").asComponent(),
+                            Component.text("§a§l締切日:${sdf.format(data.value.datetime)}").asComponent(),
+                            Component.text("§6§l報酬:${data.value.price}").asComponent()))
+                }catch (e : NullPointerException){
+                    continue
+                }
+
                 meta.persistentDataContainer.set(NamespacedKey(this,"mqid"), PersistentDataType.INTEGER,data.key)
                 item.itemMeta = meta
                 inv.setItem(int,item)
@@ -155,33 +160,48 @@ class MQP : JavaPlugin(),Listener {
                         enable = true
                         config.set("mode",true)
                         saveConfig()
+                        wait = false
                         sender.sendmsg("§bmodeをonにしました")
                         true
                     }
                 }
             }
             "help"->{
+                sender.sendMessage("§a§l==========================Man10Quest===========================")
+                sender.sendMessage("§a/mq クエスト一覧を表示します(1キーで前ページ、2キーで後ページに行けます")
+                sender.sendMessage("§a(また、アイテムをクリックするとその納品boxが開かれます)")
+                sender.sendMessage("§a(そのboxにアイテムを必要個数入れるとクエスト達成となり、お金がもらえます)")
+                sender.sendMessage("§a/mq add (期日(1~12)) (個数(64~2304)) (報酬(10000~)) 手に持ったアイテムを依頼します")
+                sender.sendMessage("§a(また、手数料として期間(1ヶ月単位)*${tax}円分引かれます")
+                sender.sendMessage("§a/mq order 自分の依頼を確認します(また、受取可能なものをクリックすると受け取れます)")
+                sender.sendMessage("§a(さらに、シフトクリックすることでキャンセルができます)")
+                sender.sendMessage("§a(キャンセルされた時に帰ってくる料金は報酬*${cancel}円です)")
+                sender.sendMessage("§a§l==========================Man10Quest=========Author:tororo_1066")
+                /**
+                 * 
                 sender.sendMessage("""
-                    §a§l==========================Man10Quest===========================
-                    §a/mq クエスト一覧を表示します(1キーで前ページ、2キーで後ページに行けます
-                    §a(また、アイテムをクリックするとその納品boxが開かれます)
-                    §a(そのboxにアイテムを必要個数入れるとクエスト達成となり、お金がもらえます)
-                    §a/mq add (期日(1~12)) (個数(64~2304)) (報酬(10000~)) 手に持ったアイテムを依頼します
-                    §a(また、手数料として期間(1ヶ月単位)*${tax}円分引かれます
-                    §a/mq order 自分の依頼を確認します(また、受取可能なものをクリックすると受け取れます)
-                    §a(さらに、シフトクリックすることでキャンセルができます)
-                    §a(キャンセルされた時に帰ってくる料金は報酬*${cancel}円です)
-                    §a§l==========================Man10Quest=========Author:tororo_1066
-                """.trimIndent())
+                §a§l==========================Man10Quest===========================
+                §a/mq クエスト一覧を表示します(1キーで前ページ、2キーで後ページに行けます
+                §a(また、アイテムをクリックするとその納品boxが開かれます)
+                §a(そのboxにアイテムを必要個数入れるとクエスト達成となり、お金がもらえます)
+                §a/mq add (期日(1~12)) (個数(64~2304)) (報酬(10000~)) 手に持ったアイテムを依頼します
+                §a(また、手数料として期間(1ヶ月単位)*${tax}円分引かれます
+                §a/mq order 自分の依頼を確認します(また、受取可能なものをクリックすると受け取れます)
+                §a(さらに、シフトクリックすることでキャンセルができます)
+                §a(キャンセルされた時に帰ってくる料金は報酬*${cancel}円です)
+                §a§l==========================Man10Quest=========Author:tororo_1066
+                """)
+                 */
                 if (sender.hasPermission("mq.op")){
                     sender.sendMessage("""
                         §c§l/mq mode モードを切り替えます
                         §c§l/mq tax (Double) 手数料を設定します(1ヵ月ごとに増える)
                         §c§l/mq canceltax (Double) キャンセルまたは期限切れの時の返却金を設定します
                         §c§l(1が最大、0が最低)
-                    """.trimIndent())
+                    """)
 
                 }
+                return true
             }
 
 
@@ -225,10 +245,12 @@ class MQP : JavaPlugin(),Listener {
                 }
                 if (int >= 54){
                     sender.sendmsg("§4依頼を出した件数が54件以上です")
+                    wait = false
                     return true
                 }
                 if (vault.getBalance(sender.uniqueId) < args[3].toDouble() + tax * args[1].toDouble()) {
                     sender.sendmsg("§4所持金が不足しています")
+                    wait = false
                     return true
                 }
 
@@ -254,6 +276,7 @@ class MQP : JavaPlugin(),Listener {
                     val rs = mysql.query("SELECT id,date FROM mqp ORDER BY id DESC LIMIT 1;")
 
                     if (rs == null) {
+                        wait = false
                         sender.sendmsg("§4依頼を出すことに失敗しました")
                         return@execute
                     }
@@ -262,9 +285,9 @@ class MQP : JavaPlugin(),Listener {
 
                     while (rs.next()){
                         datamap[rs.getInt("id")] = MQPData(sender, sender.inventory.itemInMainHand,
-                            amount, price,
-                            rs.getDate("date"),
-                            0)
+                                amount, price,
+                                rs.getDate("date"),
+                                0)
                     }
 
                     rs.close()
@@ -314,6 +337,9 @@ class MQP : JavaPlugin(),Listener {
                     item.itemMeta = meta
                     inv.setItem(int,item)
                     int += 1
+
+
+
                 }
                 sender.openInventory(inv)
                 wait = false
