@@ -13,8 +13,6 @@ import org.bukkit.event.inventory.InventoryClickEvent
 import org.bukkit.event.inventory.InventoryCloseEvent
 import org.bukkit.event.inventory.InventoryType
 import org.bukkit.event.player.PlayerDropItemEvent
-import org.bukkit.event.player.PlayerInteractEvent
-import org.bukkit.inventory.EquipmentSlot
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
 import org.bukkit.inventory.meta.Damageable
@@ -59,11 +57,12 @@ class MQP : JavaPlugin(),Listener {
         mysql.execute("CREATE TABLE `mqp` IF NOT EXISTS (\n" +
                 "\t`id` INT NOT NULL AUTO_INCREMENT,\n" +
                 "\t`owner` VARCHAR(36) NOT NULL COLLATE 'utf8mb4_0900_ai_ci',\n" +
+                "\t`mcid` VARCHAR(36) NULL COLLATE 'utf8mb4_0900_ai_ci',\n" +
                 "\t`item` LONGTEXT NULL COLLATE 'utf8mb4_0900_ai_ci',\n" +
                 "\t`amount` INT NULL,\n" +
                 "\t`price` BIGINT NULL,\n" +
                 "\t`date` TEXT NULL COLLATE 'utf8mb4_0900_ai_ci',\n" +
-                "\t`boolean` TEXT NULL COLLATE 'utf8mb4_0900_ai_ci',\n" +
+                "\t`boolean` INT NULL COLLATE 'utf8mb4_0900_ai_ci',\n" +
                 "\tPRIMARY KEY (`id`) USING BTREE\n" +
                 ")\n" +
                 "COLLATE='utf8mb4_0900_ai_ci'\n" +
@@ -180,7 +179,7 @@ class MQP : JavaPlugin(),Listener {
                 sender.sendMessage("§a/mq クエスト一覧を表示します(1キーで前ページ、2キーで後ページに行けます")
                 sender.sendMessage("§a(また、アイテムをクリックするとその納品boxが開かれます)")
                 sender.sendMessage("§a(そのboxにアイテムを必要個数入れるとクエスト達成となり、お金がもらえます)")
-                sender.sendMessage("§a/mq order (期日(1~12)) (個数(64~2304)) (報酬(10000~)) 手に持ったアイテムを依頼します")
+                sender.sendMessage("§a/mq order (期日(1~12)) (個数) (報酬(10000~)) 手に持ったアイテムを依頼します")
                 sender.sendMessage("§a(また、手数料として期間(1ヶ月単位)*${tax}円分引かれます")
                 sender.sendMessage("§a/mq list 自分の依頼を確認します(また、受取可能なものをクリックすると受け取れます)")
                 sender.sendMessage("§a(さらに、シフトクリックすることでキャンセルができます)")
@@ -258,8 +257,9 @@ class MQP : JavaPlugin(),Listener {
                     cal.add(Calendar.MONTH,month)
 
                     val mysql = MySQLManager(this, "mqqQuestAdd")
-                    mysql.execute("INSERT INTO mqp (owner, item, amount, price, date, boolean) " +
+                    mysql.execute("INSERT INTO mqp (owner, mcid, item, amount, price, date, boolean) " +
                             "VALUES ('${sender.uniqueId}', " +
+                            "'${sender.name}', " +
                             "'${itemToBase64(item)}', " +
                             "${amount}, " +
                             "${price}, " +
@@ -350,19 +350,16 @@ class MQP : JavaPlugin(),Listener {
                 }
                 val inv = Bukkit.createInventory(null,36, Component.text("$prefix 受取box id: ${args[1].toInt()}"))
 
-                val item = datamap[args[1].toInt()]?.item?.clone()
+                val item = datamap[args[1].toInt()]?.item?.clone()!!
                 var amount = datamap[args[1].toInt()]?.amount!!
-                amount/=64
-                var littleamount = datamap[args[1].toInt()]?.amount!!
-                littleamount%=64
-                item?.amount = 64
-                for (int in 1..amount){
-                    inv.addItem(item!!)
+                while(amount!=0){
+                    val a = if(amount >= item.type.maxStackSize) item.type.maxStackSize else amount
+                    item.amount = a
+                    amount -= a
+                    inv.addItem(item)
                 }
-                item?.amount = littleamount
-                inv.addItem(item!!)
-
                 sender.openInventory(inv)
+
             }
             "cancel"->{
                 if (args.size != 2)return true
@@ -396,17 +393,7 @@ class MQP : JavaPlugin(),Listener {
         return true
     }
 
-    @EventHandler
-    fun cliiik(e : PlayerInteractEvent){
-        if (e.hand == EquipmentSlot.OFF_HAND){
-            e.isCancelled = true
-            return
-        }
-        if (e.item?.type == Material.NETHERITE_AXE){
-            wait = !wait
-            e.player.sendMessage("waitを変更しました")
-        }
-    }
+
     @EventHandler
     fun drop(e : PlayerDropItemEvent){
         if (e.player.openInventory.title().toString().contains("受取box") && e.player.openInventory.title().toString().contains(prefix))e.isCancelled = true
@@ -628,6 +615,8 @@ class MQP : JavaPlugin(),Listener {
                         rs.getDate("date"),
                         rs.getInt("boolean")) } }?.let { datamap.put(rs.getInt("id"),it) }
         }
+        rs?.close()
+        mysql.close()
         p.sendmsg("§aデータの修正が完了しました！")
         wait = false
         return
